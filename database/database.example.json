@@ -1,0 +1,20 @@
+{
+  "metadata" : {
+  "lastUpdated": "",
+  "totalTabs": "1",
+  "version": ""
+  },
+  "tabs": {
+    "tab_id": {
+      "title": "Enter Sandman",
+      "artist": "Metallica", 
+      "source": "ultimate-guitar",
+      "downloadUrl": "https://..."
+    }
+  },
+  "index": {
+    "artist": {"metallica": ["tab_id1", "tab_id2"]},
+    "title": {"enter": ["tab_id1"]},
+    "album": {"master": ["tab_id1"]}
+  }
+}
