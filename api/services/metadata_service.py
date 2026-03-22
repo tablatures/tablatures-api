@@ -3,7 +3,7 @@ import time
 import requests
 from typing import Optional
 
-from api.services.artist_parser import parse_artists
+from api.services.artist_parser import parse_artists, get_all_candidate_artists
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +242,8 @@ def get_song_artwork(artist: str, title: str) -> Optional[str]:
 
 def get_artworks_batch(items: list) -> dict:
     """Get artwork for multiple {id, artist, title} items in parallel.
+    Uses smart artist extraction: tries song artwork, then all candidate
+    artists (compound splits, title extraction, fuzzy matching).
     Returns {id: url_or_none}."""
     from concurrent.futures import ThreadPoolExecutor
     results = {}
@@ -253,8 +255,12 @@ def get_artworks_batch(items: list) -> dict:
         # Try song artwork first
         url = get_song_artwork(artist, title)
         if not url:
-            # Fallback: try artist image (with compound name splitting)
-            url = get_artist_image(artist)
+            # Try all candidate artists (original, splits, title extraction)
+            candidates = get_all_candidate_artists(title, artist)
+            for candidate in candidates:
+                url = get_artist_image(candidate)
+                if url:
+                    break
         return (item_id, url)
 
     with ThreadPoolExecutor(max_workers=8) as pool:
