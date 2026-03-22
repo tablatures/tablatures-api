@@ -168,6 +168,19 @@ class SourcesResponse(BaseModel):
     total: int
 
 
+class RecommendationGroup(BaseModel):
+    """A group of recommended tabs with a reason label."""
+    reason: str  # e.g., "Because you like Metallica"
+    reason_type: str = Field(alias='reasonType')  # "artist", "similar", "discover"
+    results: List[TabDetailResponse]
+
+
+class RecommendationResponse(BaseModel):
+    """Response for smart recommendations with grouped results."""
+    groups: List[RecommendationGroup]
+    total: int
+
+
 class ErrorResponse(BaseModel):
     """Standard error response."""
     error: str
@@ -185,6 +198,15 @@ class SourceStatus(BaseModel):
     response_time_ms: int = Field(alias='responseTimeMs')
 
 
+class SourceVariant(BaseModel):
+    """A source variant for a grouped live search result."""
+    id: Optional[str] = None
+    source: str
+    source_url: str = Field(default=None, alias='sourceUrl')
+    track_count: Optional[int] = Field(default=None, alias='trackCount')
+    instruments: Optional[List[str]] = None
+
+
 class LiveSearchResultModel(BaseModel):
     """A single result from a live search."""
     title: str
@@ -197,6 +219,7 @@ class LiveSearchResultModel(BaseModel):
     instruments: Optional[List[str]] = None
     difficulty: Optional[str] = None
     score: int = 0
+    variants: Optional[List[SourceVariant]] = None
 
 
 class LiveSearchResponse(BaseModel):

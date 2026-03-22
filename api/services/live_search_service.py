@@ -57,7 +57,7 @@ class LiveSearchService:
         page: int = 1,
     ) -> dict:
         """
-        Search across multiple sources in parallel, merge and deduplicate results.
+        Search across multiple sources in parallel, merge and group results by song.
 
         Returns dict with keys: results, total, page, limit, totalPages, sourcesStatus
         """
@@ -131,11 +131,11 @@ class LiveSearchService:
                         "responseTimeMs": 0,
                     }
 
-        # Deduplicate: prefer local results over live ones
-        merged = self._deduplicate(all_results)
+        # Group by song instead of deduplicating
+        grouped = self._group_by_song(all_results)
 
         # Score results
-        scored = self._score_results(merged, query)
+        scored = self._score_results(grouped, query)
 
         # Cache merged results
         with self._cache_lock:
@@ -143,35 +143,51 @@ class LiveSearchService:
 
         return self._paginate(scored, sources_status, page, limit)
 
-    def _deduplicate(self, results: List[LiveSearchResult]) -> List[LiveSearchResult]:
-        """Deduplicate by normalized (artist+title), preferring local results."""
-        seen: Dict[str, LiveSearchResult] = {}
+    def _group_by_song(self, results: List[LiveSearchResult]) -> List[Tuple[LiveSearchResult, List[LiveSearchResult]]]:
+        """Group results by normalized artist|title instead of deduplicating.
+
+        Returns list of (primary_result, all_variants) tuples.
+        Variants are sorted: local first, then by track_count descending.
+        The primary result is the first variant after sorting.
+        """
+        from collections import OrderedDict
+
+        groups: Dict[str, List[LiveSearchResult]] = OrderedDict()
         for r in results:
             key = f"{r.artist.strip().lower()}|{r.title.strip().lower()}"
-            if key not in seen:
-                seen[key] = r
-            elif r.source == "local":
-                # Prefer local over external
-                seen[key] = r
-        return list(seen.values())
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(r)
+
+        grouped: List[Tuple[LiveSearchResult, List[LiveSearchResult]]] = []
+        for key, variants in groups.items():
+            # Sort: local first, then by track_count descending
+            variants.sort(key=lambda v: (
+                0 if v.source == "local" else 1,
+                -(v.track_count or 0),
+            ))
+            primary = variants[0]
+            grouped.append((primary, variants))
+
+        return grouped
 
     def _score_results(
-        self, results: List[LiveSearchResult], query: str
+        self, grouped_results: List[Tuple[LiveSearchResult, List[LiveSearchResult]]], query: str
     ) -> List[dict]:
-        """Score and convert results to serializable dicts."""
+        """Score and convert grouped results to serializable dicts."""
         query_lower = query.lower().strip()
         query_words = query_lower.split()
         scored = []
-        for r in results:
+        for primary, variants in grouped_results:
             score = 0
-            text = f"{r.title} {r.artist}".lower()
+            text = f"{primary.title} {primary.artist}".lower()
 
             # Exact phrase match
             if query_lower in text:
                 score += 100
 
             # Exact title match
-            if r.title.lower().strip() == query_lower:
+            if primary.title.lower().strip() == query_lower:
                 score += 200
 
             # Word matches
@@ -182,22 +198,37 @@ class LiveSearchService:
                         score += 5
 
             # Prefer local results
-            if r.source == "local":
+            if primary.source == "local":
                 score += 50
 
-            scored.append({
-                "id": r.tab_id,
-                "title": r.title,
-                "artist": r.artist,
-                "source": r.source,
-                "sourceUrl": r.source_url,
-                "album": r.album,
-                "tabType": r.tab_type,
-                "trackCount": r.track_count,
-                "instruments": r.instruments,
-                "difficulty": r.difficulty,
+            entry = {
+                "id": primary.tab_id,
+                "title": primary.title,
+                "artist": primary.artist,
+                "source": primary.source,
+                "sourceUrl": primary.source_url,
+                "album": primary.album,
+                "tabType": primary.tab_type,
+                "trackCount": primary.track_count,
+                "instruments": primary.instruments,
+                "difficulty": primary.difficulty,
                 "score": score,
-            })
+            }
+
+            # Add variants when there are multiple sources
+            if len(variants) > 1:
+                entry["variants"] = [
+                    {
+                        "id": v.tab_id,
+                        "source": v.source,
+                        "sourceUrl": v.source_url,
+                        "trackCount": v.track_count,
+                        "instruments": v.instruments,
+                    }
+                    for v in variants
+                ]
+
+            scored.append(entry)
 
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored

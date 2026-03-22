@@ -71,11 +71,16 @@ class CatalogController:
     def recommendations(self):
         """Return recommended tabs based on favorite artists."""
         try:
-            artists_param = request.args.get('artists', '')
-            if not artists_param or not artists_param.strip():
-                return jsonify({"error": "Missing required parameter: artists", "requestId": getattr(g, 'request_id', None)}), 400
+            # Support both ?artists=a,b,c (old format) and ?artists=a&artists=b (new format)
+            artists_list = request.args.getlist('artists')
+            artists = []
+            for param in artists_list:
+                # Handle comma-separated values within each parameter for backward compatibility
+                for a in param.split(','):
+                    a = a.strip()
+                    if a:
+                        artists.append(sanitize_string(a, max_length=100))
 
-            artists = [sanitize_string(a.strip(), max_length=100) for a in artists_param.split(',') if a.strip()]
             if not artists:
                 return jsonify({"error": "Missing required parameter: artists", "requestId": getattr(g, 'request_id', None)}), 400
 
