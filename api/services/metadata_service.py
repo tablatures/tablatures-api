@@ -3,13 +3,17 @@ import time
 import requests
 from typing import Optional
 
-from api.services.artist_parser import parse_artists, get_all_candidate_artists
+from api.services.artist_parser import parse_artists, get_all_candidate_artists, clean_artist_name
 
 logger = logging.getLogger(__name__)
 
-# Simple in-memory cache with TTL
+# In-memory cache with TTL
 _cache: dict = {}
-_CACHE_TTL = 3600 * 24  # 24 hours
+_CACHE_TTL = 3600 * 24  # 24 hours for metadata
+
+# Longer-lived cache for image URLs (they rarely change)
+_image_cache: dict = {}
+_IMAGE_CACHE_TTL = 3600 * 24 * 7  # 7 days
 
 USER_AGENT = "TablatureApp/1.0 (https://github.com/tablatures)"
 
@@ -23,6 +27,19 @@ def _get_cached(key: str) -> Optional[dict]:
 
 def _set_cached(key: str, data: dict):
     _cache[key] = {"data": data, "ts": time.time()}
+
+
+def _get_image_cached(key: str) -> Optional[str]:
+    """Get from long-lived image cache. Returns URL string or None."""
+    entry = _image_cache.get(key)
+    if entry and time.time() - entry["ts"] < _IMAGE_CACHE_TTL:
+        return entry["data"]
+    return None
+
+
+def _set_image_cached(key: str, url: Optional[str]):
+    """Cache an image URL (or None for negative cache)."""
+    _image_cache[key] = {"data": url, "ts": time.time()}
 
 
 def search_musicbrainz_artist(artist_name: str) -> Optional[dict]:
@@ -85,42 +102,56 @@ def _audiodb_image_lookup(name: str) -> Optional[str]:
 
 
 def get_artist_image(artist_name: str) -> Optional[str]:
-    """Try to get artist image URL from TheAudioDB (free, no auth for basic).
+    """Try to get artist image URL with multiple fallback strategies.
 
-    Falls back to compound name splitting and MusicBrainz fuzzy matching.
+    1. Clean the name (strip trailing -2, etc.)
+    2. Exact TheAudioDB lookup
+    3. Compound name splitting (feat/&/,)
+    4. MusicBrainz fuzzy search → canonical name → retry TheAudioDB
+    Uses long-lived image cache (7 days).
     """
-    cache_key = f"audiodb_img:{artist_name.lower()}"
-    cached = _get_cached(cache_key)
-    if cached is not None:
-        return cached.get("url")
+    cleaned = clean_artist_name(artist_name)
+    cache_key = f"img:{cleaned.lower()}"
 
-    # 1. Exact lookup
-    url = _audiodb_image_lookup(artist_name)
+    # Check long-lived image cache first
+    cached_url = _get_image_cached(cache_key)
+    if cached_url is not None:
+        return cached_url if cached_url else None  # empty string = negative cache
+
+    # 1. Exact lookup with cleaned name
+    url = _audiodb_image_lookup(cleaned)
     if url:
-        _set_cached(cache_key, {"url": url})
+        _set_image_cached(cache_key, url)
         return url
 
-    # 2. Try splitting compound artist names and look up each part
+    # 2. Try original name if different from cleaned
+    if cleaned.lower() != artist_name.lower():
+        url = _audiodb_image_lookup(artist_name)
+        if url:
+            _set_image_cached(cache_key, url)
+            return url
+
+    # 3. Try splitting compound artist names and look up each part
     parts = parse_artists(artist_name)
     if len(parts) > 1:
         for part in parts:
             url = _audiodb_image_lookup(part)
             if url:
-                _set_cached(cache_key, {"url": url})
+                _set_image_cached(cache_key, url)
                 return url
 
-    # 3. MusicBrainz fuzzy search to get canonical name, then retry TheAudioDB
-    mb = search_musicbrainz_artist(artist_name)
+    # 4. MusicBrainz fuzzy search to get canonical name, then retry TheAudioDB
+    mb = search_musicbrainz_artist(cleaned)
     if mb:
         canonical = mb.get("name", "")
-        if canonical and canonical.lower() != artist_name.lower():
+        if canonical and canonical.lower() != cleaned.lower():
             url = _audiodb_image_lookup(canonical)
             if url:
-                _set_cached(cache_key, {"url": url})
+                _set_image_cached(cache_key, url)
                 return url
 
-    # Cache the miss so we don't retry too often
-    _set_cached(cache_key, {"url": None})
+    # Negative cache (empty string) to avoid retrying for 7 days
+    _set_image_cached(cache_key, "")
     return None
 
 
