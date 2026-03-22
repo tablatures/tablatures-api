@@ -11,9 +11,10 @@ logger = logging.getLogger(__name__)
 _cache: dict = {}
 _CACHE_TTL = 3600 * 24  # 24 hours for metadata
 
-# Longer-lived cache for image URLs (they rarely change)
+# Image URL cache: positive hits live long, negative misses expire sooner
 _image_cache: dict = {}
-_IMAGE_CACHE_TTL = 3600 * 24 * 7  # 7 days
+_IMAGE_CACHE_TTL = 3600 * 24 * 7  # 7 days for found images
+_IMAGE_NEGATIVE_TTL = 3600         # 1 hour for misses (retry sooner)
 
 USER_AGENT = "TablatureApp/1.0 (https://github.com/tablatures)"
 
@@ -30,16 +31,19 @@ def _set_cached(key: str, data: dict):
 
 
 def _get_image_cached(key: str) -> Optional[str]:
-    """Get from long-lived image cache. Returns URL string or None."""
+    """Get from image cache. Positive hits use long TTL, negative misses use short TTL."""
     entry = _image_cache.get(key)
-    if entry and time.time() - entry["ts"] < _IMAGE_CACHE_TTL:
+    if not entry:
+        return None
+    ttl = _IMAGE_CACHE_TTL if entry["data"] else _IMAGE_NEGATIVE_TTL
+    if time.time() - entry["ts"] < ttl:
         return entry["data"]
     return None
 
 
 def _set_image_cached(key: str, url: Optional[str]):
-    """Cache an image URL (or None for negative cache)."""
-    _image_cache[key] = {"data": url, "ts": time.time()}
+    """Cache an image URL. Empty string = negative cache (miss)."""
+    _image_cache[key] = {"data": url or "", "ts": time.time()}
 
 
 def search_musicbrainz_artist(artist_name: str) -> Optional[dict]:
