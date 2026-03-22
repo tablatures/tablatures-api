@@ -170,22 +170,10 @@ def get_artist_info(artist_name: str) -> dict:
     except Exception as e:
         logger.warning("TheAudioDB fetch failed: %s", e)
 
-    # iTunes fallback for image
+    # If no image from TheAudioDB, use the smart get_artist_image() which
+    # tries compound name splitting and MusicBrainz fuzzy correction
     if not result["image"]:
-        try:
-            resp = requests.get(
-                "https://itunes.apple.com/search",
-                params={"term": artist_name, "entity": "musicArtist", "limit": 1},
-                timeout=5,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                results_list = data.get("results", [])
-                if results_list:
-                    # iTunes doesn't always have artist images but has artwork
-                    pass
-        except:
-            pass
+        result["image"] = get_artist_image(artist_name)
 
     _set_cached(cache_key, result)
     return result
