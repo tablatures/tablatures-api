@@ -36,6 +36,20 @@ class _CacheEntry:
         return (time.time() - self.created_at) > CACHE_TTL
 
 
+def _warm_artwork_cache(results):
+    """Background: pre-fetch artwork for search results to warm cache."""
+    try:
+        from api.services.metadata_service import get_artist_image, get_song_artwork
+        artists = list({r.get('artist', '') for r in results if r.get('artist')})
+        for artist in artists[:10]:
+            try:
+                get_artist_image(artist)
+            except:
+                pass
+    except:
+        pass
+
+
 class LiveSearchService:
     def __init__(self):
         self._source_instances: Dict[str, BaseSource] = {}
@@ -141,7 +155,15 @@ class LiveSearchService:
         with self._cache_lock:
             self._cache[cache_key] = _CacheEntry(scored, sources_status)
 
-        return self._paginate(scored, sources_status, page, limit)
+        # Warm artwork cache in background for search results
+        paginated = self._paginate(scored, sources_status, page, limit)
+        threading.Thread(
+            target=_warm_artwork_cache,
+            args=(paginated.get("results", []),),
+            daemon=True,
+        ).start()
+
+        return paginated
 
     def _group_by_song(self, results: List[LiveSearchResult]) -> List[Tuple[LiveSearchResult, List[LiveSearchResult]]]:
         """Group results by normalized artist|title instead of deduplicating.

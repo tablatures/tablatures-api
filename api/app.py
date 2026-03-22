@@ -386,6 +386,12 @@ def _register_routes():
         """Song artwork endpoint"""
         return metadata_controller.song_artwork()
 
+    @app.route('/api/metadata/artwork/batch', methods=['POST'])
+    @app.route('/api/v1/metadata/artwork/batch', methods=['POST'])
+    def metadata_artwork_batch():
+        """Batch artwork endpoint"""
+        return metadata_controller.batch_artwork()
+
     @app.route('/api/youtube/search', methods=['GET'])
     @app.route('/api/v1/youtube/search', methods=['GET'])
     def youtube_search():
