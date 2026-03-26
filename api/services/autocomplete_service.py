@@ -39,7 +39,7 @@ class AutocompleteService:
                 prefix.append({"type": "artist", "value": artist})
             elif search in lower:
                 substring.append({"type": "artist", "value": artist})
-            if len(prefix) >= limit:
+            if len(prefix) + len(substring) >= limit * 3:
                 break
         results = prefix[:limit]
         remaining = limit - len(results)
@@ -55,10 +55,11 @@ class AutocompleteService:
         substring = []
         for entry in self._title_cache:
             title_lower = entry["title"].lower()
+            text = title_lower + " " + entry["artist"].lower()
             if len(query_words) == 1:
-                match = search in title_lower
+                match = search in text
             else:
-                match = all(w in title_lower for w in query_words)
+                match = all(w in text for w in query_words)
             if not match:
                 continue
             item = {"type": "song", "value": entry["title"], "info": entry["artist"]}
