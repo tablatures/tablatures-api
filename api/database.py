@@ -28,7 +28,7 @@ class DatabaseManager:
 
     def __init__(self):
         if not hasattr(self, 'initialized'):
-            self.db_path = Path.cwd() / "database" / "database.json"
+            self.db_path = Path(os.environ.get("DATABASE_PATH", Path.cwd() / "database" / "database.json"))
             self._load_database()
             self.initialized = True
 
