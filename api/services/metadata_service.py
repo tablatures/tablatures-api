@@ -46,6 +46,34 @@ def _set_image_cached(key: str, url: Optional[str]):
     _image_cache[key] = {"data": url or "", "ts": time.time()}
 
 
+def _normalize_for_match(name: str) -> str:
+    """Normalize artist name for comparison: strip accents, lowercase, collapse whitespace."""
+    import unicodedata
+    n = unicodedata.normalize('NFD', name)
+    n = ''.join(c for c in n if unicodedata.category(c) != 'Mn')
+    n = n.lower().strip()
+    n = ' '.join(n.split())
+    return n
+
+
+def _pick_best_mb_artist(artists: list, query: str) -> Optional[dict]:
+    """Pick the MusicBrainz result that best matches the query name."""
+    nq = _normalize_for_match(query)
+    # First pass: exact normalized match
+    for a in artists:
+        if _normalize_for_match(a.get("name", "")) == nq:
+            return a
+    # Second pass: starts-with match
+    for a in artists:
+        na = _normalize_for_match(a.get("name", ""))
+        if na.startswith(nq) or nq.startswith(na):
+            return a
+    # Third pass: MusicBrainz score-based (first result is highest score)
+    if artists:
+        return artists[0]
+    return None
+
+
 def search_musicbrainz_artist(artist_name: str) -> Optional[dict]:
     """Search MusicBrainz for an artist and return MBID + basic info."""
     cache_key = f"mb_artist:{artist_name.lower()}"
@@ -56,15 +84,15 @@ def search_musicbrainz_artist(artist_name: str) -> Optional[dict]:
     try:
         resp = requests.get(
             "https://musicbrainz.org/ws/2/artist/",
-            params={"query": artist_name, "fmt": "json", "limit": 1},
+            params={"query": artist_name, "fmt": "json", "limit": 5},
             headers={"User-Agent": USER_AGENT},
             timeout=5,
         )
         if resp.status_code == 200:
             data = resp.json()
             artists = data.get("artists", [])
-            if artists:
-                artist = artists[0]
+            artist = _pick_best_mb_artist(artists, artist_name)
+            if artist:
                 result = {
                     "mbid": artist.get("id"),
                     "name": artist.get("name"),
@@ -144,11 +172,12 @@ def get_artist_image(artist_name: str) -> Optional[str]:
                 _set_image_cached(cache_key, url)
                 return url
 
-    # 4. MusicBrainz fuzzy search to get canonical name, then retry TheAudioDB
+    # 4. MusicBrainz search to get canonical name, then retry TheAudioDB
     mb = search_musicbrainz_artist(cleaned)
     if mb:
         canonical = mb.get("name", "")
-        if canonical and canonical.lower() != cleaned.lower():
+        # Only use canonical name if it's a normalized match (e.g. accent differences)
+        if canonical and canonical.lower() != cleaned.lower() and _normalize_for_match(canonical) == _normalize_for_match(cleaned):
             url = _audiodb_image_lookup(canonical)
             if url:
                 _set_image_cached(cache_key, url)
@@ -178,10 +207,13 @@ def get_artist_info(artist_name: str) -> dict:
     # MusicBrainz for metadata
     mb = search_musicbrainz_artist(artist_name)
     if mb:
+        mb_name = mb.get("name", "")
+        # Only use MB name if it's a close match to the query (same name, different casing/accents)
+        if mb_name and _normalize_for_match(mb_name) == _normalize_for_match(artist_name):
+            result["name"] = mb_name
         result["mbid"] = mb.get("mbid")
         result["country"] = mb.get("country")
         result["tags"] = mb.get("tags", [])
-        result["name"] = mb.get("name", artist_name)
 
     # TheAudioDB for image + bio
     try:
