@@ -37,17 +37,24 @@ def fuzzy_match(query: str, target: str, max_distance: int = 2) -> bool:
     for qw in query_words:
         matched = False
         for tw in target_words:
-            # Exact substring match
-            if qw in tw:
+            # Exact word match
+            if qw == tw:
                 matched = True
                 break
-            # Levenshtein on short words (avoid expensive computation on long strings)
+            # Substring match only if query word is most of the target word
+            # "mestis" in "mestis123" is ok, but "est" in "mestis" is not
+            if qw in tw and len(qw) >= len(tw) * 0.7:
+                matched = True
+                break
+            # Levenshtein on similar-length words
             if len(qw) >= 3 and len(tw) >= 3:
-                dist = levenshtein_distance(qw, tw)
-                threshold = 1 if len(qw) <= 4 else max_distance
-                if dist <= threshold:
-                    matched = True
-                    break
+                if abs(len(qw) - len(tw)) <= 1:
+                    dist = levenshtein_distance(qw, tw)
+                    # Strict: only 1 edit for words under 8 chars
+                    threshold = 1 if len(qw) < 8 else max_distance
+                    if dist <= threshold:
+                        matched = True
+                        break
         if not matched:
             return False
     return True
@@ -170,28 +177,43 @@ class SearchService:
 
         # Score results
         query_lower = query.lower().strip()
+        import unicodedata
+        def _strip_accents(s: str) -> str:
+            return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+        query_normalized = _strip_accents(query_lower)
+
         scored_results = []
         for tab in results:
             score = 0
             text = f"{tab.title} {tab.artist or ''} {tab.album or ''}".lower()
+            artist_lower = (tab.artist or '').lower()
+            artist_normalized = _strip_accents(artist_lower)
 
-            # Exact full phrase match bonus
-            if query_lower in text:
-                score += 100
+            # Artist name matches query (strongest signal)
+            if artist_normalized == query_normalized:
+                score += 300
+            else:
+                # Word-boundary check: "clapton" matches "eric clapton" but "mest" doesn't match "mestis"
+                artist_words = set(artist_normalized.split())
+                query_words_set = set(query_normalized.split())
+                if query_words_set & artist_words:
+                    score += 200
 
             # Exact title match
-            if tab.title.lower() == query_lower:
+            if tab.title.lower() == query_lower or _strip_accents(tab.title.lower()) == query_normalized:
                 score += 200
+
+            # Exact full phrase match bonus
+            if query_lower in text or query_normalized in _strip_accents(text):
+                score += 100
 
             # Naive words scoring
             for word in parsed.naive_words:
                 if word in text:
                     score += 10
-                    # Boost longer word matches, penalize very short partial matches
                     if len(word) >= 4:
                         score += 5
                 elif len(word) >= 3:
-                    # Fuzzy match gives lower score
                     words_in_text = text.split()
                     for tw in words_in_text:
                         if len(tw) >= 3 and levenshtein_distance(word, tw) <= 2:
